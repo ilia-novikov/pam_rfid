@@ -12,10 +12,8 @@ void close_device() {
 
 int* read_card(time_t timeout) {
     if (!initialized) {
-        printf("[pam_rfid] Cardreader is not initialized\n");
         return NULL;
     }
-    printf("[pam_rfid] Waiting for card... (timeout is %i sec)\n", timeout);
     int index = 0;
     bool pass = false;
     int* scanned = malloc(sizeof(int) * CARD_LENGTH);
@@ -27,7 +25,6 @@ int* read_card(time_t timeout) {
     while (scanned_count < CARD_LENGTH) {
         int ready = select(descriptor + 1, &fd, NULL, NULL, &delay);
         if ((!ready) || (ready == ERROR)) {
-            printf("[pam_rfid] Cardreader timeout\n");
             return NULL;
         }
         struct input_event event;
@@ -61,7 +58,6 @@ int* read_card(time_t timeout) {
                 break;
         }
     }
-    printf("[pam_rfid] Card has been successfully read\n");
     return scanned;
 }
 
@@ -70,14 +66,12 @@ int open_device(char* path)
     initialized = false;
     descriptor = open(path, O_RDONLY);
     if (descriptor == ERROR) {
-        printf("[pam_rfid] Can't open cardreader\n");
-        return EXIT_ERROR_OPEN;
+        return ERROR_OPEN;
     }
     int error = ioctl(descriptor, EVIOCGRAB, 1);
     if (error) {
-        printf("[pam_rfid] Can't grab cardreader\n");
-        return EXIT_ERROR_GRAB;
+        return ERROR_GRAB;
     }
     initialized = true;
-    return EXIT_OK;
+    return 0;
 }

@@ -17,9 +17,8 @@ typedef char bool;
 
 #define ERROR -1
 
-#define EXIT_OK 0
-#define EXIT_ERROR_OPEN 1
-#define EXIT_ERROR_GRAB 2
+#define ERROR_OPEN 1
+#define ERROR_GRAB 2
 
 #define CARD_LENGTH 10
 

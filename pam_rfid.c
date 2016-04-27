@@ -1,13 +1,16 @@
 #include "pam_rfid.h"
 
 char* get_cards_file(pam_handle_t*);
-struct cards_t get_available_cards(char*);
+struct cards_t get_available_cards(pam_handle_t*, char*);
 void free_cards(struct cards_t*);
 bool compare(int*, int*);
+int send_message(int, pam_handle_t*, char*);
+int send_info(pam_handle_t*, char*);
+int send_error(pam_handle_t*, char*);
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t* handle, int flags, int argc, const char** argv) {
     if (!argc) {
-        printf("[pam_rfid] No cardreader specified\n");
+        send_error(handle, "No cardreader specified");
         return PAM_AUTH_ERR;
     }
     int timeout = DEFAULT_TIMEOUT;
@@ -18,24 +21,43 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* handle, int flags, int argc, co
     if (!cards_file) {
         return PAM_AUTH_ERR;
     }
-    struct cards_t list = get_available_cards(cards_file);
+    struct cards_t list = get_available_cards(handle, cards_file);
     if (!list.cards) {
         free(cards_file);
         return PAM_AUTH_ERR;
     }
     int cardreader_error = open_device((char*) argv[0]);
     if (cardreader_error) {
+        switch (cardreader_error) {
+            case ERROR_OPEN: {
+                send_error(handle, "Can't open cardreader");
+                break;
+            }
+
+            case ERROR_GRAB: {
+                send_error(handle, "Can't grab cardreader");
+                break;
+            }
+
+            default: {
+                send_error(handle, "Unknown device error");
+                break;
+            }
+        }
         free(cards_file);
         free_cards(&list);
         return PAM_AUTH_ERR;
     }
+    send_info(handle, "Waiting for card...");
     int* card = read_card(timeout);
-    if (card == NULL) {
+    if (!card) {
+        send_error(handle, "Cardreader timeout");
         free(cards_file);
         free_cards(&list);
         close_device();
         return PAM_AUTH_ERR;
     }
+    send_info(handle, "Card has been successfully read");
     bool match_found = false;
     for (int i = 0; i < list.count; i++) {
         if (compare(card, list.cards[i])) {
@@ -44,14 +66,14 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* handle, int flags, int argc, co
         }
     }
     if (!match_found) {
-        printf("[pam_rfid] Card validation was failed\n");
+        send_error(handle, "Card validation was failed");
         free(card);
         close_device();
         free_cards(&list);
         free(cards_file);
         return PAM_AUTH_ERR;
     }
-    printf("[pam_rfid] Card validation was successful\n");
+    send_info(handle, "Card validation was successful");
     free(card);
     close_device();
     free_cards(&list);
@@ -79,7 +101,7 @@ char* get_cards_file(pam_handle_t* handle) {
     const char* username;
     int result;
     if ((result = pam_get_user(handle, &username, "Username: ")) != PAM_SUCCESS) {
-        printf("[pam_rfid] Can't acquire username, aborting\n");
+        send_error(handle, "Can't acquire username");
         return NULL;
     }
     char* prefix = "/home/";
@@ -92,11 +114,11 @@ char* get_cards_file(pam_handle_t* handle) {
     return file;
 }
 
-struct cards_t get_available_cards(char* cards_file) {
+struct cards_t get_available_cards(pam_handle_t* handle, char* cards_file) {
     struct cards_t result = {NULL, 0};
     FILE* file = fopen(cards_file, "r");
     if (!file) {
-        printf("[pam_rfid] Cards' file not found: %s\n", cards_file);
+        send_error(handle, "Config file not found");
         return result;
     }
     char* line = NULL;
@@ -106,7 +128,7 @@ struct cards_t get_available_cards(char* cards_file) {
         result.count++;
     }
     if (!result.count) {
-        printf("[pam_rfid] No cards found in file: %s\n", cards_file);
+        send_error(handle, "No cards found in config");
         return result;
     }
     rewind(file);
@@ -127,7 +149,31 @@ struct cards_t get_available_cards(char* cards_file) {
     return result;
 }
 
-//
+int send_message(int type, pam_handle_t* handle, char* text) {
+    const struct pam_message message = {
+		type,
+		text
+	};
+    const struct pam_message* message_p = &message;
+    struct pam_conv *conversation;
+	struct pam_response *response;
+	int r;
+	if (pam_get_item(handle, PAM_CONV, (const void **) &conversation) != PAM_SUCCESS) {
+        return ERROR;
+    }
+	if ((!conversation) || (!conversation->conv)) {
+        return ERROR;
+    }
+	return conversation->conv(1, &message_p, &response, conversation->appdata_ptr);
+}
+
+int send_info(pam_handle_t* handle, char* text) {
+    return send_message(PAM_TEXT_INFO, handle, text);
+}
+
+int send_error(pam_handle_t* handle, char* text) {
+    return send_message(PAM_ERROR_MSG, handle, text);
+}
 
 PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char *argv[]) {
     return (PAM_SUCCESS);
